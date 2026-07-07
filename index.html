@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CertIndex Status</title>
+  <meta name="description" content="Live operational status for the CertIndex Certificate Transparency API." />
+  <meta name="robots" content="index,follow" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1020'/%3E%3Cpath d='M16 4l10 4v7c0 6-4.2 10.5-10 13-5.8-2.5-10-7-10-13V8z' fill='none' stroke='%2314B8B8' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M11 16.2l3.4 3.4L21 12.8' fill='none' stroke='%232dd4bf' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #060912;
+      --surface: #0b1020;
+      --surface-2: #111827;
+      --surface-3: #1a2336;
+      --border: #1f2937;
+      --border-strong: #2c3a52;
+      --fg: #f3f4f6;
+      --fg-muted: #9ca3af;
+      --fg-subtle: #6b7280;
+      --teal: #2dd4bf;
+      --teal-strong: #14b8a6;
+      --mint: #9bd9d2;
+      --ok: #34d399;
+      --ok-soft: rgba(52, 211, 153, 0.12);
+      --warn: #fbbf24;
+      --warn-soft: rgba(251, 191, 36, 0.12);
+      --down: #f87171;
+      --down-soft: rgba(248, 113, 113, 0.13);
+      --unknown: #9ca3af;
+      --unknown-soft: rgba(156, 163, 175, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background:
+        radial-gradient(1200px 600px at 50% -10%, rgba(20, 184, 184, 0.10), transparent 60%),
+        var(--bg);
+      color: var(--fg);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
+
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+    .logo { width: 34px; height: 34px; flex: none; }
+    .brand { font-weight: 650; font-size: 18px; letter-spacing: -0.01em; }
+    .brand .sub { color: var(--fg-muted); font-weight: 500; }
+
+    .banner {
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      padding: 22px 24px;
+      display: flex; align-items: center; gap: 16px;
+      background: var(--surface);
+      margin-bottom: 26px;
+    }
+    .banner .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: 0 0 0 5px currentColor; opacity: 0.95; }
+    .banner .txt { min-width: 0; }
+    .banner .headline { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+    .banner .desc { color: var(--fg-muted); font-size: 13.5px; margin-top: 3px; }
+
+    .banner.state-ok { border-color: rgba(52,211,153,0.4); background: linear-gradient(180deg, var(--ok-soft), var(--surface)); }
+    .banner.state-ok .dot, .banner.state-ok .headline { color: var(--ok); }
+    .banner.state-warn { border-color: rgba(251,191,36,0.4); background: linear-gradient(180deg, var(--warn-soft), var(--surface)); }
+    .banner.state-warn .dot, .banner.state-warn .headline { color: var(--warn); }
+    .banner.state-down { border-color: rgba(248,113,113,0.45); background: linear-gradient(180deg, var(--down-soft), var(--surface)); }
+    .banner.state-down .dot, .banner.state-down .headline { color: var(--down); }
+    .banner.state-unknown .dot, .banner.state-unknown .headline { color: var(--unknown); }
+    .banner.state-ok .headline, .banner.state-warn .headline, .banner.state-down .headline { -webkit-text-fill-color: currentColor; }
+
+    .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--fg-subtle); margin: 0 0 12px 4px; font-weight: 600; }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 18px;
+      border-top: 1px solid var(--border);
+    }
+    .row:first-child { border-top: none; }
+    .row .name { font-weight: 550; }
+    .row .name .hint { display: block; color: var(--fg-subtle); font-size: 12.5px; font-weight: 400; margin-top: 2px; }
+    .row .spacer { flex: 1; }
+    .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 999px; white-space: nowrap; }
+    .pill .d { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .pill.state-ok { color: var(--ok); background: var(--ok-soft); }
+    .pill.state-warn { color: var(--warn); background: var(--warn-soft); }
+    .pill.state-down { color: var(--down); background: var(--down-soft); }
+    .pill.state-unknown { color: var(--unknown); background: var(--unknown-soft); }
+
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 22px; }
+    .metric { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); padding: 14px 16px; }
+    .metric .label { color: var(--fg-subtle); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric .value { font-size: 22px; font-weight: 650; margin-top: 5px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .metric .value small { font-size: 13px; color: var(--fg-muted); font-weight: 500; }
+    .metric .value.good { color: var(--ok); }
+    .metric .value.bad { color: var(--warn); }
+
+    footer { margin-top: 32px; color: var(--fg-subtle); font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+    footer a { color: var(--teal); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    .refresh-note { display: inline-flex; align-items: center; gap: 7px; }
+    .beacon { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 0 rgba(45,212,191,0.6); animation: pulse 2.4s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(45,212,191,0.5); } 70% { box-shadow: 0 0 0 7px rgba(45,212,191,0); } 100% { box-shadow: 0 0 0 0 rgba(45,212,191,0); } }
+    .sla { color: var(--fg-subtle); }
+    .divider { color: var(--border-strong); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#0b1020"/>
+        <path d="M16 4l10 4v7c0 6-4.2 10.5-10 13-5.8-2.5-10-7-10-13V8z" fill="none" stroke="#14B8B8" stroke-width="2.2" stroke-linejoin="round"/>
+        <path d="M11 16.2l3.4 3.4L21 12.8" fill="none" stroke="#2dd4bf" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="brand">CertIndex <span class="sub">Status</span></div>
+    </header>
+
+    <div id="banner" class="banner state-unknown" role="status" aria-live="polite">
+      <span class="dot"></span>
+      <div class="txt">
+        <div class="headline" id="banner-headline">Checking status…</div>
+        <div class="desc" id="banner-desc">Contacting the CertIndex API.</div>
+      </div>
+    </div>
+
+    <p class="section-title">Components</p>
+    <div class="card" id="components">
+      <div class="row">
+        <div class="name">API
+          <span class="hint">Certificate Transparency REST API, MCP &amp; firehose</span>
+        </div>
+        <div class="spacer"></div>
+        <span class="pill state-unknown" id="pill-api"><span class="d"></span>Checking…</span>
+      </div>
+      <div class="row">
+        <div class="name">CT-log ingestion
+          <span class="hint">Freshness of indexed certificates from public CT logs</span>
+        </div>
+        <div class="spacer"></div>
+        <span class="pill state-unknown" id="pill-ingest"><span class="d"></span>Checking…</span>
+      </div>
+    </div>
+
+    <div class="metrics" id="metrics">
+      <div class="metric">
+        <div class="label">Ingestion lag (p95)</div>
+        <div class="value" id="m-p95">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Ingestion lag (median)</div>
+        <div class="value" id="m-p50">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Active CT logs</div>
+        <div class="value" id="m-active">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Worst-case lag</div>
+        <div class="value" id="m-max">—</div>
+      </div>
+    </div>
+
+    <footer>
+      <span class="refresh-note"><span class="beacon"></span><span id="last-checked">Updating…</span></span>
+      <span class="divider">•</span>
+      <span class="sla">SLA target: ingestion p95 &lt; 60s</span>
+      <span class="divider">•</span>
+      <a href="https://ctindex.io" rel="noopener">ctindex.io</a>
+    </footer>
+  </div>
+
+  <script>
+    // ---- Configuration -----------------------------------------------------
+    // The CertIndex API is served same-origin with the marketing site. The
+    // apex (ctindex.io) 301-redirects to www, so poll the canonical origin
+    // directly to avoid a cross-origin redirect hop. Override for testing
+    // with ?api=https://your-host  (e.g. a staging deploy).
+    var DEFAULT_API_BASE = "https://www.ctindex.io";
+    var params = new URLSearchParams(location.search);
+    var API_BASE = (params.get("api") || DEFAULT_API_BASE).replace(/\/+$/, "");
+    var REFRESH_MS = 30000;   // poll cadence
+    var FETCH_TIMEOUT_MS = 9000;
+    var SLA_P95 = 60;         // seconds — operational threshold for ingestion lag
+
+    // Status ranking: higher = worse. Overall status is the worst component.
+    var RANK = { ok: 0, warn: 1, unknown: 1.5, down: 3 };
+
+    function fetchJSON(path) {
+      var ctrl = new AbortController();
+      var t = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+      return fetch(API_BASE + path, { signal: ctrl.signal, cache: "no-store", mode: "cors" })
+        .then(function (res) {
+          clearTimeout(t);
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.json();
+        })
+        .catch(function (err) { clearTimeout(t); throw err; });
+    }
+
+    function fmtLag(sec) {
+      if (sec === null || sec === undefined) return "—";
+      if (sec < 1) return "<1s";
+      if (sec < 90) return Math.round(sec) + "s";
+      var m = sec / 60;
+      if (m < 90) return m.toFixed(m < 10 ? 1 : 0) + "m";
+      var h = m / 60;
+      if (h < 48) return h.toFixed(h < 10 ? 1 : 0) + "h";
+      return Math.round(h / 24) + "d";
+    }
+
+    function setPill(id, state, label) {
+      var el = document.getElementById(id);
+      el.className = "pill state-" + state;
+      el.innerHTML = '<span class="d"></span>' + label;
+    }
+
+    function setMetric(id, text, cls) {
+      var el = document.getElementById(id);
+      el.innerHTML = text;
+      el.className = "value" + (cls ? " " + cls : "");
+    }
+
+    function classifyIngestion(fr) {
+      // fr: the freshness payload, or null on fetch failure.
+      // A lagging-but-advancing pipeline is "Degraded", never a full outage —
+      // "Major outage" is reserved for the API being unreachable (see render).
+      if (!fr) return { state: "warn", label: "Unavailable" };
+      if (fr.ok === false) return { state: "warn", label: "Degraded" };
+      var p95 = fr.p95_lag_seconds;
+      if (p95 === null || p95 === undefined) {
+        if (!fr.active_logs) return { state: "warn", label: "No active logs" };
+        return { state: "ok", label: "Operational" };
+      }
+      if (p95 <= SLA_P95) return { state: "ok", label: "Operational" };
+      return { state: "warn", label: "Delayed" };
+    }
+
+    function overallCopy(state) {
+      switch (state) {
+        case "ok": return ["All systems operational", "The CertIndex API is up and ingesting Certificate Transparency logs within target."];
+        case "warn": return ["Degraded performance", "The service is reachable but one or more components are running below target."];
+        case "down": return ["Major outage", "One or more core components are unreachable or significantly delayed."];
+        default: return ["Status unavailable", "We couldn't determine the current status. Retrying shortly."];
+      }
+    }
+
+    function render(health, fr, healthErr) {
+      // --- API component ---
+      var apiState, apiLabel;
+      if (healthErr) { apiState = "down"; apiLabel = "Unreachable"; }
+      else if (health && (health.status === "ok" || health.ok === true)) { apiState = "ok"; apiLabel = "Operational"; }
+      else { apiState = "warn"; apiLabel = "Degraded"; }
+      setPill("pill-api", apiState, apiLabel);
+
+      // --- Ingestion component ---
+      var ing = classifyIngestion(fr);
+      setPill("pill-ingest", ing.state, ing.label);
+
+      // --- Metrics ---
+      if (fr && fr.ok !== false) {
+        var p95 = fr.p95_lag_seconds;
+        setMetric("m-p95", fmtLag(p95), p95 == null ? "" : (p95 <= SLA_P95 ? "good" : "bad"));
+        setMetric("m-p50", fmtLag(fr.p50_lag_seconds));
+        setMetric("m-active", (fr.active_logs != null ? fr.active_logs : "—") +
+          (fr.stale_logs ? ' <small>(' + fr.stale_logs + ' stale)</small>' : ""));
+        setMetric("m-max", fmtLag(fr.max_lag_seconds));
+      } else {
+        setMetric("m-p95", "—"); setMetric("m-p50", "—");
+        setMetric("m-active", "—"); setMetric("m-max", "—");
+      }
+
+      // --- Overall banner (worst component) ---
+      var worst = "ok";
+      [apiState, ing.state].forEach(function (s) {
+        if ((RANK[s] || 0) > (RANK[worst] || 0)) worst = s;
+      });
+      // Both probes failed → unambiguous major outage.
+      if (healthErr && !fr) worst = "down";
+
+      var banner = document.getElementById("banner");
+      banner.className = "banner state-" + (worst === "unknown" ? "unknown" : worst);
+      var copy = overallCopy(worst);
+      document.getElementById("banner-headline").textContent = copy[0];
+      document.getElementById("banner-desc").textContent = copy[1];
+    }
+
+    function tick() {
+      Promise.allSettled([fetchJSON("/health"), fetchJSON("/v1/status/ingestion-freshness")])
+        .then(function (results) {
+          var health = results[0].status === "fulfilled" ? results[0].value : null;
+          var healthErr = results[0].status === "rejected";
+          var fr = results[1].status === "fulfilled" ? results[1].value : null;
+          render(health, fr, healthErr);
+          document.getElementById("last-checked").textContent =
+            "Last checked " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        });
+    }
+
+    tick();
+    setInterval(tick, REFRESH_MS);
+    // Re-check immediately when the tab regains focus.
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") tick();
+    });
+  </script>
+</body>
+</html>
