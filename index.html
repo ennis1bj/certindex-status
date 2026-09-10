@@ -110,6 +110,8 @@
     .beacon { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 0 rgba(45,212,191,0.6); animation: pulse 2.4s infinite; }
     @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(45,212,191,0.5); } 70% { box-shadow: 0 0 0 7px rgba(45,212,191,0); } 100% { box-shadow: 0 0 0 0 rgba(45,212,191,0); } }
     .sla { color: var(--fg-subtle); }
+    .metric-note { margin-top: 14px; color: var(--fg-subtle); font-size: 12.5px; line-height: 1.55; }
+    .metric-note strong { color: var(--fg-muted); font-weight: 600; }
     .divider { color: var(--border-strong); }
   </style>
 </head>
@@ -152,27 +154,49 @@
 
     <div class="metrics" id="metrics">
       <div class="metric">
-        <div class="label">Ingestion lag (p95)</div>
-        <div class="value" id="m-p95">—</div>
+        <div class="label">CT logs caught up</div>
+        <div class="value" id="m-caught">—</div>
       </div>
       <div class="metric">
-        <div class="label">Ingestion lag (median)</div>
-        <div class="value" id="m-p50">—</div>
+        <div class="label">Median last-advance age</div>
+        <div class="value" id="m-advance">—</div>
       </div>
       <div class="metric">
         <div class="label">Active CT logs</div>
         <div class="value" id="m-active">—</div>
       </div>
       <div class="metric">
-        <div class="label">Worst-case lag</div>
+        <div class="label">Ingestion backlog (p95)</div>
+        <div class="value" id="m-p95">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Live-cohort p95 (scoped SLA)</div>
+        <div class="value" id="m-sla">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Backlog (max, 1 log)</div>
         <div class="value" id="m-max">—</div>
       </div>
     </div>
 
+    <p class="metric-note" id="metric-note">
+      <strong>CT logs caught up</strong> — logs whose signed tree head equals
+      our ingested position (backlog = 0). CT logs are temporally sharded:
+      a shard outside its expiry window accepts almost nothing, so it can show
+      a large last-advance age while its backlog stays 0 and is fully current.
+      "Ingestion backlog" counts entries a log has published that we have not
+      yet ingested. The published freshness SLA is <strong>p95 append-to-query-visible
+      &lt; 15 minutes</strong> for the indexed live cohort on tip-following
+      logs (not <code>worker_lag_certs</code>, not leftover shard drain, not a
+      global coverage %). Canonical text:
+      <a href="https://github.com/ennis1bj/CertIndex/blob/main/docs/SLA.md">docs/SLA.md</a>.
+    </p>
+    <p class="metric-note" id="liveness-note" hidden></p>
+
     <footer>
       <span class="refresh-note"><span class="beacon"></span><span id="last-checked">Updating…</span></span>
       <span class="divider">•</span>
-      <span class="sla">SLA target: ingestion p95 &lt; 60s</span>
+      <span class="sla">Scoped SLA: p95 &lt; 15 min live cohort (docs/SLA.md)</span>
       <span class="divider">•</span>
       <a href="https://ctindex.io" rel="noopener">ctindex.io</a>
     </footer>
@@ -189,7 +213,15 @@
     var API_BASE = (params.get("api") || DEFAULT_API_BASE).replace(/\/+$/, "");
     var REFRESH_MS = 30000;   // poll cadence
     var FETCH_TIMEOUT_MS = 9000;
-    var SLA_P95 = 60;         // seconds — operational threshold for ingestion lag
+    // Freshness SLI: p95 ingestion BACKLOG (entries a log published that we
+    // have not ingested).  The advance-age figures (*_lag_seconds) are NOT an
+    // ingestion-lag measure — CT temporal sharding means a shard outside its
+    // expiry window has nothing to publish, so its advance age grows to hours
+    // while its backlog stays 0 (GH #292).
+    var SLA_P95_BACKLOG = 1000;  // entries — operational threshold
+    var SLA_LIVE_P95_SECONDS = 900;  // scoped SLA ceiling (docs/SLA.md)
+    var SLA_P95 = 60;            // seconds — legacy advance-age threshold,
+                                 // only used against pre-#292 API payloads
 
     // Status ranking: higher = worse. Overall status is the worst component.
     var RANK = { ok: 0, warn: 1, unknown: 1.5, down: 3 };
@@ -204,6 +236,15 @@
           return res.json();
         })
         .catch(function (err) { clearTimeout(t); throw err; });
+    }
+
+    function fmtEntries(n) {
+      if (n === null || n === undefined) return "—";
+      n = Math.round(n);
+      if (n === 0) return "0 <small>entries</small>";
+      if (n < 1000) return n + " <small>entries</small>";
+      if (n < 1000000) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k <small>entries</small>";
+      return (n / 1000000).toFixed(1) + "M <small>entries</small>";
     }
 
     function fmtLag(sec) {
@@ -229,20 +270,73 @@
       el.className = "value" + (cls ? " " + cls : "");
     }
 
+    // --- testable ---
+    // liveSlaP95 / slaMetric / classifyIngestion are extracted by
+    // scripts/tests/test_status_page.py. Keep them free of DOM writes.
+
+    function liveSlaP95(fr) {
+      if (!fr) return null;
+      var slaP95 = fr.visibility_latency_p95_seconds_24h;
+      if (slaP95 === null || slaP95 === undefined) slaP95 = fr.visibility_latency_p95_seconds;
+      return slaP95;
+    }
+
+    function slaTargetSeconds(fr) {
+      return (fr && fr.freshness_sla_target_seconds) || SLA_LIVE_P95_SECONDS;
+    }
+
+    function slaMetric(fr) {
+      // Always render a measured live-cohort p95 when the payload has one,
+      // including when leftover-shard liveness has set ok=false. A null
+      // sample is labelled, never scored as 0s (docs/SLA.md).
+      if (!fr) return { text: "—", cls: "" };
+      var slaP95 = liveSlaP95(fr);
+      var slaTarget = slaTargetSeconds(fr);
+      if (slaP95 === null || slaP95 === undefined) {
+        var why = fr.visibility_latency_unavailable_reason || "unmeasured";
+        return { text: "— <small>" + why + "</small>", cls: "" };
+      }
+      return {
+        text: fmtLag(slaP95) + " <small>/ " + Math.round(slaTarget / 60) + "m</small>",
+        cls: slaP95 <= slaTarget ? "good" : "bad"
+      };
+    }
+
     function classifyIngestion(fr) {
       // fr: the freshness payload, or null on fetch failure.
-      // A lagging-but-advancing pipeline is "Degraded", never a full outage —
       // "Major outage" is reserved for the API being unreachable (see render).
       if (!fr) return { state: "warn", label: "Unavailable" };
-      if (fr.ok === false) return { state: "warn", label: "Degraded" };
-      var p95 = fr.p95_lag_seconds;
-      if (p95 === null || p95 === undefined) {
-        if (!fr.active_logs) return { state: "warn", label: "No active logs" };
+
+      // Buyer-facing SLA (docs/SLA.md): p95 append-to-query-visible for the
+      // indexed live cohort. Leftover shard drain liveness (ok=false /
+      // shard_progress_stale) is operator telemetry and must not blank the
+      // SLA tile or force a public "Degraded" while the live cohort is
+      // within the 15-minute ceiling.
+      var p95 = liveSlaP95(fr);
+      var target = slaTargetSeconds(fr);
+      if (p95 !== null && p95 !== undefined) {
+        if (p95 > target) return { state: "warn", label: "Degraded" };
+        if (fr.straggler_alert === true) return { state: "warn", label: "One log behind" };
         return { state: "ok", label: "Operational" };
       }
-      if (p95 <= SLA_P95) return { state: "ok", label: "Operational" };
+
+      if (fr.ok === false) return { state: "warn", label: "Degraded" };
+      if (!fr.active_logs) return { state: "warn", label: "No active logs" };
+
+      // No live-cohort sample: fall back to straggler / caught-up, then
+      // the pre-#292 advance-age payload shape.
+      var sample = fr.backlog_sample_logs;
+      if (sample != null && sample > 0) {
+        if (fr.straggler_alert === true) return { state: "warn", label: "One log behind" };
+        return { state: "ok", label: "Operational" };
+      }
+
+      var lag = fr.p95_lag_seconds;
+      if (lag === null || lag === undefined) return { state: "ok", label: "Operational" };
+      if (lag <= SLA_P95) return { state: "ok", label: "Operational" };
       return { state: "warn", label: "Delayed" };
     }
+    // --- /testable ---
 
     function overallCopy(state) {
       switch (state) {
@@ -266,16 +360,72 @@
       setPill("pill-ingest", ing.state, ing.label);
 
       // --- Metrics ---
-      if (fr && fr.ok !== false) {
-        var p95 = fr.p95_lag_seconds;
-        setMetric("m-p95", fmtLag(p95), p95 == null ? "" : (p95 <= SLA_P95 ? "good" : "bad"));
-        setMetric("m-p50", fmtLag(fr.p50_lag_seconds));
+      // Render whenever the freshness payload arrived. ok=false from
+      // leftover-shard liveness is not "no numbers" — the live-cohort SLA
+      // and backlog tiles are still valid operator/buyer telemetry.
+      if (fr) {
+        var sample = fr.backlog_sample_logs;
+        var caught = fr.caught_up_logs;
+
+        // Tile 1: Logs caught up (headline).
+        if (sample != null && sample > 0) {
+          var caughtAll = (caught === sample);
+          setMetric(
+            "m-caught",
+            (caught != null ? caught : "—") + ' <small>of ' + (sample || "—") + '</small>',
+            caughtAll ? "good" : ""
+          );
+        } else if (fr.active_logs) {
+          // No backlog sample (no signed heads yet) — show active log count
+          // with a note rather than a misleading fraction.
+          setMetric("m-caught", (fr.active_logs || "—") + ' <small>active</small>', "");
+        } else {
+          setMetric("m-caught", "—");
+        }
+
+        // Tile 2: Median last-advance age (secondary; deliberately uncoloured —
+        // a large value is normal for quiet temporal shards).
+        var advance = fr.p50_advance_age_seconds;
+        if (advance === null || advance === undefined) advance = fr.p50_lag_seconds;
+        setMetric("m-advance", fmtLag(advance));
+
+        // Tile 3: Active CT logs.
         setMetric("m-active", (fr.active_logs != null ? fr.active_logs : "—") +
           (fr.stale_logs ? ' <small>(' + fr.stale_logs + ' stale)</small>' : ""));
-        setMetric("m-max", fmtLag(fr.max_lag_seconds));
+
+        // Tile 4 + 5: Backlog figures (supplementary; present for transparency
+        // but not used to colour the pill).
+        var p95b = fr.p95_backlog_entries;
+        if (p95b !== null && p95b !== undefined) {
+          setMetric("m-p95", fmtEntries(p95b));
+          setMetric("m-max", fmtEntries(fr.max_backlog_entries));
+        } else {
+          // Pre-#292 payload: fall back to advance-age figures as a proxy.
+          var p95 = fr.p95_lag_seconds;
+          setMetric("m-p95", fmtLag(p95));
+          setMetric("m-max", fmtLag(fr.max_lag_seconds));
+        }
+
+        var sla = slaMetric(fr);
+        setMetric("m-sla", sla.text, sla.cls);
       } else {
-        setMetric("m-p95", "—"); setMetric("m-p50", "—");
-        setMetric("m-active", "—"); setMetric("m-max", "—");
+        setMetric("m-caught", "—"); setMetric("m-advance", "—");
+        setMetric("m-active", "—"); setMetric("m-p95", "—");
+        setMetric("m-max", "—"); setMetric("m-sla", "—");
+      }
+
+      var livenessNote = document.getElementById("liveness-note");
+      if (livenessNote) {
+        if (fr && fr.ok === false && fr.liveness_reason) {
+          livenessNote.hidden = false;
+          livenessNote.innerHTML =
+            "<strong>Operator signal</strong> — leftover shard drain is not currently consuming (" +
+            fr.liveness_reason +
+            "). That is not the published live-cohort SLA; the tile above still quotes the measured p95.";
+        } else {
+          livenessNote.hidden = true;
+          livenessNote.textContent = "";
+        }
       }
 
       // --- Overall banner (worst component) ---
