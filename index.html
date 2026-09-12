@@ -219,7 +219,9 @@
     // expiry window has nothing to publish, so its advance age grows to hours
     // while its backlog stays 0 (GH #292).
     var SLA_P95_BACKLOG = 1000;  // entries — operational threshold
+    // sla-generated-begin
     var SLA_LIVE_P95_SECONDS = 900;  // scoped SLA ceiling (docs/SLA.md)
+    // sla-generated-end
     var SLA_P95 = 60;            // seconds — legacy advance-age threshold,
                                  // only used against pre-#292 API payloads
 
