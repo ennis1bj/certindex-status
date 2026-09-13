@@ -187,16 +187,16 @@
       "Ingestion backlog" counts entries a log has published that we have not
       yet ingested. The published freshness SLA is <strong>p95 append-to-query-visible
       &lt; 15 minutes</strong> for the indexed live cohort on tip-following
-      logs (not <code>worker_lag_certs</code>, not leftover shard drain, not a
-      global coverage %). Canonical text:
-      <a href="https://github.com/ennis1bj/CertIndex/blob/main/docs/SLA.md">docs/SLA.md</a>.
+      logs (not internal backlog counters, not leftover shard drain, not a
+      global coverage %). Full SLA terms:
+      <a href="https://www.ctindex.io/sla">certindex.io/sla</a>.
     </p>
     <p class="metric-note" id="liveness-note" hidden></p>
 
     <footer>
       <span class="refresh-note"><span class="beacon"></span><span id="last-checked">Updating…</span></span>
       <span class="divider">•</span>
-      <span class="sla">Scoped SLA: p95 &lt; 15 min live cohort (docs/SLA.md)</span>
+      <span class="sla">Scoped SLA: p95 &lt; 15 min live cohort (<a href="https://www.ctindex.io/sla">SLA</a>)</span>
       <span class="divider">•</span>
       <a href="https://ctindex.io" rel="noopener">ctindex.io</a>
     </footer>
@@ -208,7 +208,7 @@
     // apex (ctindex.io) 301-redirects to www, so poll the canonical origin
     // directly to avoid a cross-origin redirect hop. Override for testing
     // with ?api=https://your-host  (e.g. a staging deploy).
-    var DEFAULT_API_BASE = "https://www.ctindex.io";
+    var DEFAULT_API_BASE = "https://api.ctindex.io";
     var params = new URLSearchParams(location.search);
     var API_BASE = (params.get("api") || DEFAULT_API_BASE).replace(/\/+$/, "");
     var REFRESH_MS = 30000;   // poll cadence
@@ -217,10 +217,10 @@
     // have not ingested).  The advance-age figures (*_lag_seconds) are NOT an
     // ingestion-lag measure — CT temporal sharding means a shard outside its
     // expiry window has nothing to publish, so its advance age grows to hours
-    // while its backlog stays 0 (GH #292).
+    // while its backlog stays 0 (quiet temporal shard).
     var SLA_P95_BACKLOG = 1000;  // entries — operational threshold
     // sla-generated-begin
-    var SLA_LIVE_P95_SECONDS = 900;  // scoped SLA ceiling (docs/SLA.md)
+    var SLA_LIVE_P95_SECONDS = 900;  // scoped SLA ceiling (www.ctindex.io/sla)
     // sla-generated-end
     var SLA_P95 = 60;            // seconds — legacy advance-age threshold,
                                  // only used against pre-#292 API payloads
@@ -290,7 +290,7 @@
     function slaMetric(fr) {
       // Always render a measured live-cohort p95 when the payload has one,
       // including when leftover-shard liveness has set ok=false. A null
-      // sample is labelled, never scored as 0s (docs/SLA.md).
+      // sample is labelled, never scored as 0s (public SLA page).
       if (!fr) return { text: "—", cls: "" };
       var slaP95 = liveSlaP95(fr);
       var slaTarget = slaTargetSeconds(fr);
@@ -309,7 +309,7 @@
       // "Major outage" is reserved for the API being unreachable (see render).
       if (!fr) return { state: "warn", label: "Unavailable" };
 
-      // Buyer-facing SLA (docs/SLA.md): p95 append-to-query-visible for the
+      // Buyer-facing SLA: p95 append-to-query-visible for the
       // indexed live cohort. Leftover shard drain liveness (ok=false /
       // shard_progress_stale) is operator telemetry and must not blank the
       // SLA tile or force a public "Degraded" while the live cohort is
